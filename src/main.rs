@@ -131,6 +131,12 @@ pub async fn create_kiosk_version(
                         tracing::error!("failed to create kiosk directory: {:?}", e)
                     })?;
 
+                // writes note into txt file
+                let content = request.notes.clone();
+                fs::write("output.txt", content).await.inspect_err(|e| {
+                    tracing::error!("failed to write file: {}", e);
+                })?;
+
                 for platform in platforms {
                     let kiosk_version_platform_directory =
                         kiosk_version_directory.clone() + &String::from("/") + &platform;
@@ -165,7 +171,7 @@ pub async fn create_kiosk_version(
 pub struct PlatformDetails {
     pub signature: String,
     pub url: String,
-    pub name: String,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -234,22 +240,22 @@ pub async fn get_latest_version(
         linux_x86_64: PlatformDetails {
             signature: "".to_string(),
             url: "".to_string(),
-            name: "linux_x86_64".to_string(),
+            name: Some("linux_x86_64".to_string()),
         },
         windows_x86_64: PlatformDetails {
             signature: "".to_string(),
             url: "".to_string(),
-            name: "windows_x86_64".to_string(),
+            name: Some("windows_x86_64".to_string()),
         },
         darwin_x86_64: PlatformDetails {
             signature: "".to_string(),
             url: "".to_string(),
-            name: "darwin_x86_64".to_string(),
+            name: Some("darwin_x86_64".to_string()),
         },
         darwin_aarch64: PlatformDetails {
             signature: "".to_string(),
             url: "".to_string(),
-            name: "darwin_aarch64".to_string(),
+            name: Some("darwin_aarch64".to_string()),
         },
     };
 
@@ -292,7 +298,14 @@ pub async fn get_latest_version(
     }
 
     for platform in platforms.iter_mut() {
-        let platform_name = platform.name.clone().to_string();
+        let platform_name = match platform.name.clone() {
+            Some(name) => name,
+            None => {
+                tracing::error!("failed to get platform name");
+                return Err(APIError::Internal); // or handle differently
+            }
+        };
+
         let mut platform_entries =
             match fs::read_dir(latest_folder.clone() + &String::from("/") + &platform_name)
                 .await
