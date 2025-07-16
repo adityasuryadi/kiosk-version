@@ -70,7 +70,10 @@ async fn main() {
         .route("/health", get(health_check_handler))
         .route("/kiosk-version", post(create_kiosk_version))
         .route("/latest-version", get(get_latest_version))
-        .route("/download/{filename}", get(download_file))
+        .route(
+            "/download/{version}/{platform}/{filename}",
+            get(download_file),
+        )
         .with_state(state);
     let listener = TcpListener::bind(app_url).await.unwrap();
     serve(listener, app).await.unwrap();
@@ -226,12 +229,6 @@ pub async fn get_latest_version(
     let mut dir = tokio::fs::read_dir(kiosk_directory.clone()).await?;
     let mut modified_date: SystemTime = SystemTime::UNIX_EPOCH;
     let kiosk_url = dotenv::var("KIOSK_DOWNLOADABLE_URL").unwrap();
-    // let platforms: Vec<String> = vec![
-    //     "windows_x86_64".to_string(),
-    //     "linux_x86_64".to_string(),
-    //     "darwin_x86_64".to_string(),
-    //     "darwin_aarch64".to_string(),
-    // ];
 
     let mut platforms = Platforms {
         linux_x86_64: PlatformDetails {
@@ -293,77 +290,6 @@ pub async fn get_latest_version(
     } else {
         println!("No directories found");
     }
-
-    println!("Latest folder: {}", latest_folder);
-    // read file in platforms folder
-    // for platform in platforms.clone() {
-    //     let mut platform_entries =
-    //         fs::read_dir(latest_folder.clone() + &String::from("/") + &platform).await?;
-    //     println!("Platform: {}", platform);
-    //     while let Some(entry) = platform_entries.next_entry().await? {
-    //         let path = entry.path();
-
-    //         if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("sig") {
-    //             // Read the content as string
-    //             let content = fs::read_to_string(path.display().to_string())
-    //                 .await
-    //                 .map_err(|_| {
-    //                     tracing::error!(
-    //                         "failed to read file: {}",
-    //                         latest_folder.clone() + &String::from("/") + &platform
-    //                     );
-    //                     return APIError::Internal;
-    //                 })?;
-    //             println!("Signature content:\n{}", content);
-    //         }
-    //     }
-    // }
-
-    // for (name, details) in platforms.iter() {
-    //     let mut platform_entries =
-    //         fs::read_dir(latest_folder.clone() + &String::from("/") + &name).await?;
-    //     while let Some(entry) = platform_entries.next_entry().await? {
-    //         let path = entry.path();
-
-    //         if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("sig") {
-    //             // Read the content as string
-    //             let content = fs::read_to_string(path.display().to_string())
-    //                 .await
-    //                 .map_err(|_| {
-    //                     tracing::error!(
-    //                         "failed to read file: {}",
-    //                         latest_folder.clone() + &String::from("/") + &name
-    //                     );
-    //                     return APIError::Internal;
-    //                 })?;
-    //         }
-    //     }
-    // }
-
-    // platforms.iter_mut().for_each(|platform| {
-    //     let platform_name = serde_json::to_string(platform)
-    //         .map_err(|e| tracing::error!("{}", e))
-    //         .unwrap();
-    //     let mut platform_entries =
-    //         fs::read_dir(latest_folder.clone() + &String::from("/") + &platform_name).await?;
-    //     while let Some(entry) = platform_entries.next_entry().await? {
-    //         let path = entry.path();
-
-    //         if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("sig") {
-    //             // Read the content as string
-    //             let content = fs::read_to_string(path.display().to_string())
-    //                 .await
-    //                 .map_err(|_| {
-    //                     tracing::error!(
-    //                         "failed to read file: {}",
-    //                         latest_folder.clone() + &String::from("/") + &platform_name
-    //                     );
-    //                     return APIError::Internal;
-    //                 })?;
-    //             platform.signature = content;
-    //         }
-    //     }
-    // });
 
     for platform in platforms.iter_mut() {
         let platform_name = platform.name.clone().to_string();
@@ -427,35 +353,25 @@ pub async fn get_latest_version(
 
 async fn download_file(
     State(state): State<Arc<AppState>>,
-    Path(filename): Path<String>,
+    Path((version, platform, filename)): Path<(String, String, String)>,
 ) -> Result<Response<Body>, APIError> {
-    let path = state.public_path.join(&filename);
+    let kiosk_directory = dotenv::var("KIOSK_DIRECTORY").unwrap();
+    let path = std::path::Path::new(&kiosk_directory)
+        .join(&version)
+        .join(&platform)
+        .join(&filename);
 
-    // Check if file exists
-    if !path.exists() {
+    println!("download path {}", path.display());
+    // // Check if file exists
+    if !path.clone().exists() {
         return Err(APIError::NotFound);
     }
 
-    // Get the file's mime type for content-type header
-    // let mime_type = mime_guess::from_path(&path)
-    //     .first_or_octet_stream();
-
     let mime_type = mime_guess::from_path(&path).first_or_octet_stream();
-
-    // let file = File::open(&path).await?;
     let file = tokio::fs::File::open(path)
         .await
         .inspect_err(|e| tracing::error!("failed to open file: {:?}", e))?;
-    // let stream = tokio_util::io::ReaderStream::new(file);
     let stream = tokio_util::io::ReaderStream::new(file);
-
-    // let headers = [
-    //     (header::CONTENT_TYPE, mime_type.as_ref()),
-    //     (
-    //         header::CONTENT_DISPOSITION,
-    //         &format!("attachment; filename=\"{}\"", filename),
-    //     ),
-    // ];
 
     let mut headers = HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, mime_type.as_ref().parse().unwrap());
@@ -465,12 +381,6 @@ async fn download_file(
             .parse()
             .unwrap(),
     );
-
-    // // Ok((headers, stream))
-    // Response::builder()
-    //     .status(StatusCode::OK)
-    //     .headers(headers)
-    //     .body(Body::from(stream))
 
     let mut response = Response::new(Body::from_stream(stream));
     *response.headers_mut() = headers;
