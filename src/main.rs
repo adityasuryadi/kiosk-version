@@ -133,7 +133,12 @@ pub async fn create_kiosk_version(
 
                 // writes note into txt file
                 let content = request.notes.clone();
-                fs::write("output.txt", content).await.inspect_err(|e| {
+                fs::write(
+                    kiosk_version_directory.clone() + &String::from("/") + "notes.txt",
+                    content,
+                )
+                .await
+                .inspect_err(|e| {
                     tracing::error!("failed to write file: {}", e);
                 })?;
 
