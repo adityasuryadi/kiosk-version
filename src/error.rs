@@ -12,6 +12,7 @@ pub enum APIError {
     Internal,
     NotFound,
     FolderExist,
+    FileOrPathNotExist,
 }
 
 impl APIError {
@@ -39,6 +40,9 @@ impl IntoResponse for APIError {
             APIError::Internal => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
             APIError::NotFound => StatusCode::NOT_FOUND.into_response(),
             APIError::FolderExist => {
+                self.into_kiosk_version_error::<()>(StatusCode::UNPROCESSABLE_ENTITY, None)
+            }
+            APIError::FileOrPathNotExist => {
                 self.into_kiosk_version_error::<()>(StatusCode::UNPROCESSABLE_ENTITY, None)
             }
         }

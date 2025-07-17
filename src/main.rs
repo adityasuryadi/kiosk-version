@@ -248,7 +248,7 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
                 Some(name) => name,
                 None => {
                     tracing::error!("failed to get platform name");
-                    return Err(APIError::Internal);
+                    return Err(APIError::FileOrPathNotExist);
                 }
             };
 
@@ -264,7 +264,8 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
                     Ok(entries) => entries,
                     Err(e) => {
                         // Handle the error here
-                        return Err(APIError::Internal);
+                        tracing::error!("failed to read directory: {}", e);
+                        return Err(APIError::FileOrPathNotExist);
                     }
                 };
 
@@ -286,7 +287,7 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
                                 "failed to read file: {}",
                                 latest_folder.clone() + &String::from("/") + &platform_name
                             );
-                            return APIError::Internal;
+                            return APIError::FileOrPathNotExist;
                         })?;
                     platform.signature = content;
                     is_signature_exist = true;
@@ -307,7 +308,6 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
                 }
                 is_platform_folder_not_empty = is_signature_exist && is_downladble_file_exist;
             }
-            println!("platform folder not empty {}", is_platform_folder_not_empty);
             if is_platform_folder_not_empty {
                 platform_amount_counter += 1;
             }
@@ -333,7 +333,6 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
     }))
 }
 
-async fn get_version_platforms(
     kiosk_directory: String,
     version: String,
 ) -> Result<Platforms, String> {
@@ -447,7 +446,6 @@ async fn download_file(
         .join(&platform)
         .join(&filename);
 
-    println!("download path {}", path.display());
     // // Check if file exists
     if !path.clone().exists() {
         return Err(APIError::NotFound);
