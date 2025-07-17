@@ -96,7 +96,7 @@ pub struct CreateKioskVersionRequest {
 // - [x] validate folder if exist
 // - [] checking last created folder
 // - [] checking isi folder
-// - [] notes input ke txt
+// - [x] notes input ke txt
 
 pub async fn create_kiosk_version(
     State(state): State<Arc<AppState>>,
@@ -240,6 +240,8 @@ pub async fn get_latest_version(
     let mut dir = tokio::fs::read_dir(kiosk_directory.clone()).await?;
     let mut modified_date: SystemTime = SystemTime::UNIX_EPOCH;
     let kiosk_url = dotenv::var("KIOSK_DOWNLOADABLE_URL").unwrap();
+    let mut latest_version = "1.0.0".to_string();
+    let mut is_platorm_filled = true;
 
     let mut platforms = Platforms {
         linux_x86_64: PlatformDetails {
@@ -266,15 +268,12 @@ pub async fn get_latest_version(
 
     while let Some(entry) = dir.next_entry().await? {
         let path = entry.path();
-        // Check if it's a directory
         if entry.file_type().await?.is_dir() {
-            // Get modification time
             let metadata = entry.metadata().await?;
             let modified = metadata.modified()?;
 
             modified_date = metadata.created().or_else(|_| metadata.modified())?;
 
-            // Update newest folder if this one is newer
             match newest_folder {
                 Some((_, current_time)) if modified > current_time => {
                     newest_folder = Some((path.display().to_string(), modified));
@@ -302,16 +301,19 @@ pub async fn get_latest_version(
         println!("No directories found");
     }
 
+    // count platform total
+    let platform_amount = platforms.iter().count();
+    let mut platform_amount_counter = 0;
     for platform in platforms.iter_mut() {
         let platform_name = match platform.name.clone() {
             Some(name) => name,
             None => {
                 tracing::error!("failed to get platform name");
-                return Err(APIError::Internal); // or handle differently
+                return Err(APIError::Internal);
             }
         };
 
-        let mut platform_entries =
+        let mut platforms_directory =
             match fs::read_dir(latest_folder.clone() + &String::from("/") + &platform_name)
                 .await
                 .inspect_err(|e| {
@@ -326,9 +328,14 @@ pub async fn get_latest_version(
                     return Err(APIError::Internal);
                 }
             };
-        while let Some(entry) = platform_entries.next_entry().await? {
-            let path = entry.path();
 
+        // checking file inside platform directory
+        let mut is_platform_folder_not_empty = false;
+        let mut is_signature_exist = false;
+        let mut is_downladble_file_exist = false;
+        while let Some(entry) = platforms_directory.next_entry().await? {
+            let path = entry.path();
+            // checking signature file
             if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("sig") {
                 // Read the content as string
                 let content = fs::read_to_string(path.display().to_string())
@@ -341,8 +348,10 @@ pub async fn get_latest_version(
                         return APIError::Internal;
                     })?;
                 platform.signature = content;
+                is_signature_exist = true;
             }
 
+            // checking file besides sig extension
             if path.is_file() && path.extension().and_then(|e| e.to_str()) != Some("sig") {
                 platform.url = format!(
                     "{}/{}/{}/{}",
@@ -353,8 +362,18 @@ pub async fn get_latest_version(
                         .and_then(|s| s.to_str())
                         .map_or("".to_string(), |s| s.to_string())
                 );
+                is_downladble_file_exist = true;
             }
         }
+        is_platform_folder_not_empty = (is_signature_exist && is_downladble_file_exist);
+        if is_platform_folder_not_empty {
+            platform_amount_counter += 1;
+        }
+    }
+
+    if platform_amount == platform_amount_counter {
+        println!("platform amount counter {}", platform_amount_counter);
+        println!("platform amount {}", platform_amount);
     }
 
     let dt: chrono::DateTime<Utc> = modified_date.into();
