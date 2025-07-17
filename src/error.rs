@@ -59,6 +59,12 @@ impl From<serde_json::Error> for APIError {
     }
 }
 
+impl From<Box<dyn std::error::Error>> for APIError {
+    fn from(e: Box<dyn std::error::Error>) -> Self {
+        APIError::Internal
+    }
+}
+
 #[derive(Serialize)]
 struct ReturnedResponse<T: Serialize> {
     kiosk_version_error: ReturnedKioskVersionError<T>,
