@@ -1,4 +1,8 @@
-use axum::{http::StatusCode, response::IntoResponse, Json};
+use axum::{
+    http::{header, StatusCode},
+    response::IntoResponse,
+    Json,
+};
 use sea_orm::DbErr;
 use serde::Serialize;
 use strum::IntoStaticStr;
@@ -54,13 +58,20 @@ impl From<std::io::Error> for APIError {
 }
 
 impl From<serde_json::Error> for APIError {
-    fn from(e: serde_json::Error) -> Self {
+    fn from(_: serde_json::Error) -> Self {
         APIError::Internal
     }
 }
 
 impl From<Box<dyn std::error::Error>> for APIError {
-    fn from(e: Box<dyn std::error::Error>) -> Self {
+    fn from(_: Box<dyn std::error::Error>) -> Self {
+        APIError::Internal
+    }
+}
+
+impl From<header::ToStrError> for APIError {
+    fn from(_: header::ToStrError) -> Self {
+        // Convert the error to an APIError
         APIError::Internal
     }
 }

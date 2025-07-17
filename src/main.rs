@@ -2,17 +2,14 @@ use crate::error::APIError;
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{header, request, HeaderMap, Response, StatusCode},
+    http::{header, HeaderMap, Response, StatusCode},
     response::IntoResponse,
     routing::{get, post},
-    serve, Error, Json, Router,
+    serve, Json, Router,
 };
-use dotenv::dotenv;
 use sea_orm::{
     sqlx::types::chrono::{self, Utc},
-    ActiveModelTrait,
-    ActiveValue::{NotSet, Set},
-    Database, DatabaseConnection, EntityTrait, QueryOrder, TransactionTrait,
+    ActiveModelTrait, Database, DatabaseConnection, EntityTrait,
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
@@ -27,28 +24,10 @@ use tracing_subscriber::fmt::Subscriber;
 mod entity;
 mod error;
 
-pub struct AppState {
-    pub database: DatabaseConnection,
-    pub public_path: PathBuf,
-}
-
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
     let app_url = "localhost:3000";
-    let db_url = dotenv::var("DATABASE_URL").unwrap();
-    let database = Database::connect(db_url).await.unwrap();
-    let public_dir = std::path::Path::new("./public");
-    if !public_dir.exists() {
-        fs::create_dir(public_dir)
-            .await
-            .expect("Failed to create public directory");
-    }
-    let state = Arc::new(AppState {
-        database,
-        public_path: public_dir.to_path_buf(),
-    });
-
     let subscriber = Subscriber::builder()
         .with_writer(io::stderr)
         .with_max_level(
@@ -68,8 +47,7 @@ async fn main() {
         .route(
             "/download/{version}/{platform}/{filename}",
             get(download_file),
-        )
-        .with_state(state);
+        );
     let listener = TcpListener::bind(app_url).await.unwrap();
     serve(listener, app).await.unwrap();
 }
@@ -94,11 +72,9 @@ pub struct CreateKioskVersionRequest {
 // - [x] notes input ke txt
 
 pub async fn create_kiosk_version(
-    State(state): State<Arc<AppState>>,
     request: Json<CreateKioskVersionRequest>,
 ) -> Result<StatusCode, APIError> {
     let kiosk_directory = dotenv::var("KIOSK_DIRECTORY").unwrap();
-    let mut dir = tokio::fs::read_dir(kiosk_directory.clone()).await?;
     let folder_version_name = request.version.clone();
     let kiosk_version_directory =
         kiosk_directory.clone() + &String::from("/") + &folder_version_name;
@@ -156,16 +132,6 @@ pub async fn create_kiosk_version(
 
     Ok(StatusCode::OK)
 }
-
-// #[derive(Serialize, Deserialize)]
-// pub struct KioskVersionResponse {
-//     pub version: String,
-//     pub note: String,
-//     pub url: String,
-//     pub signature: String,
-//     pub created_at: chrono::DateTime<Utc>,
-//     pub updated_at: chrono::DateTime<Utc>,
-// }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PlatformDetails {
@@ -339,7 +305,7 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
                     );
                     is_downladble_file_exist = true;
                 }
-                is_platform_folder_not_empty = (is_signature_exist && is_downladble_file_exist);
+                is_platform_folder_not_empty = is_signature_exist && is_downladble_file_exist;
             }
             println!("platform folder not empty {}", is_platform_folder_not_empty);
             if is_platform_folder_not_empty {
@@ -459,7 +425,7 @@ async fn get_version_platforms(
                 is_downladble_file_exist = true;
             }
         }
-        is_platform_folder_not_empty = (is_signature_exist && is_downladble_file_exist);
+        is_platform_folder_not_empty = is_signature_exist && is_downladble_file_exist;
         if is_platform_folder_not_empty {
             platform_amount_counter += 1;
         }
@@ -473,7 +439,6 @@ async fn get_version_platforms(
 }
 
 async fn download_file(
-    State(state): State<Arc<AppState>>,
     Path((version, platform, filename)): Path<(String, String, String)>,
 ) -> Result<Response<Body>, APIError> {
     let kiosk_directory = dotenv::var("KIOSK_DIRECTORY").unwrap();
@@ -495,12 +460,22 @@ async fn download_file(
     let stream = tokio_util::io::ReaderStream::new(file);
 
     let mut headers = HeaderMap::new();
-    headers.insert(header::CONTENT_TYPE, mime_type.as_ref().parse().unwrap());
+    // headers.insert(header::CONTENT_TYPE, mime_type.as_ref().parse().unwrap());
+    headers.insert(
+        header::CONTENT_TYPE,
+        mime_type.as_ref().parse().map_err(|e| {
+            tracing::error!("failed to parse mime type {}", e);
+            APIError::Internal
+        })?,
+    );
     headers.insert(
         header::CONTENT_DISPOSITION,
         format!("attachment; filename=\"{}\"", filename)
             .parse()
-            .unwrap(),
+            .map_err(|e| {
+                tracing::error!("failed to parse content disposition {}", e);
+                APIError::Internal
+            })?,
     );
 
     let mut response = Response::new(Body::from_stream(stream));
