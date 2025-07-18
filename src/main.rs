@@ -13,7 +13,9 @@ use sea_orm::{
 };
 use semver::Version;
 use serde::{Deserialize, Serialize};
-use std::{io, path::PathBuf, sync::Arc, time::SystemTime};
+use std::{
+    fs::Permissions, io, os::unix::fs::PermissionsExt, path::PathBuf, sync::Arc, time::SystemTime,
+};
 use tokio::{
     fs::{self},
     net::TcpListener,
@@ -60,7 +62,6 @@ pub async fn health_check_handler() -> impl IntoResponse {
 pub struct CreateKioskVersionRequest {
     pub version: String,
     pub notes: String,
-    pub platforms: Platforms,
 }
 
 // TODO
@@ -101,6 +102,13 @@ pub async fn create_kiosk_version(
                     .inspect_err(|e| {
                         tracing::error!("failed to create kiosk directory: {:?}", e)
                     })?;
+
+                let permissions = Permissions::from_mode(0o755);
+
+                // set permission
+                fs::set_permissions(kiosk_version_directory.clone(), permissions)
+                    .await
+                    .inspect_err(|e| tracing::error!("failed to set permission: {}", e))?;
 
                 // writes note into txt file
                 let content = request.notes.clone();
@@ -331,110 +339,6 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
         pub_date: "1970-01-01T00:00:00+00:00".to_string(),
         platforms: platforms,
     }))
-}
-
-    kiosk_directory: String,
-    version: String,
-) -> Result<Platforms, String> {
-    let mut platforms = Platforms {
-        linux_x86_64: PlatformDetails {
-            signature: "".to_string(),
-            url: "".to_string(),
-            name: Some("linux_x86_64".to_string()),
-        },
-        windows_x86_64: PlatformDetails {
-            signature: "".to_string(),
-            url: "".to_string(),
-            name: Some("windows_x86_64".to_string()),
-        },
-        darwin_x86_64: PlatformDetails {
-            signature: "".to_string(),
-            url: "".to_string(),
-            name: Some("darwin_x86_64".to_string()),
-        },
-        darwin_aarch64: PlatformDetails {
-            signature: "".to_string(),
-            url: "".to_string(),
-            name: Some("darwin_aarch64".to_string()),
-        },
-    };
-    let platform_amount = platforms.iter().count();
-    let mut platform_amount_counter = 0;
-    for platform in platforms.iter_mut() {
-        let platform_name = match platform.name.clone() {
-            Some(name) => name,
-            None => {
-                tracing::error!("failed to get platform name");
-                Err("failed to get platform name".to_string())?
-            }
-        };
-
-        let mut platforms_directory =
-            match fs::read_dir(kiosk_directory.clone() + &String::from("/") + &platform_name)
-                .await
-                .inspect_err(|e| {
-                    tracing::error!(
-                        "failed to read directory: {}",
-                        kiosk_directory.clone() + &String::from("/") + &platform_name
-                    );
-                }) {
-                Ok(entries) => entries,
-                Err(e) => {
-                    // Handle the error here
-                    Err("failed to read entries".to_string())?
-                }
-            };
-
-        // checking file inside platform directory
-        let mut is_platform_folder_not_empty = false;
-        let mut is_signature_exist = false;
-        let mut is_downladble_file_exist = false;
-        while let Some(entry) = platforms_directory.next_entry().await.map_err(|e| {
-            tracing::error!("failed to read directory entry: {}", e);
-            "failed to read directory entry".to_string()
-        })? {
-            let path = entry.path();
-            // checking signature file
-            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("sig") {
-                // Read the content as string
-                let content = fs::read_to_string(path.display().to_string())
-                    .await
-                    .map_err(|e| {
-                        tracing::error!(
-                            "failed to read file: {}",
-                            kiosk_directory.clone() + &String::from("/") + &platform_name
-                        );
-                        e.to_string()
-                    })?;
-                platform.signature = content;
-                is_signature_exist = true;
-            }
-
-            // checking file besides sig extension
-            if path.is_file() && path.extension().and_then(|e| e.to_str()) != Some("sig") {
-                platform.url = format!(
-                    "{}/{}/{}/{}",
-                    kiosk_directory.clone(),
-                    version,
-                    platform_name,
-                    path.file_name()
-                        .and_then(|s| s.to_str())
-                        .map_or("".to_string(), |s| s.to_string())
-                );
-                is_downladble_file_exist = true;
-            }
-        }
-        is_platform_folder_not_empty = is_signature_exist && is_downladble_file_exist;
-        if is_platform_folder_not_empty {
-            platform_amount_counter += 1;
-        }
-    }
-
-    if platform_amount_counter < platform_amount {
-        Err("some file are missing".to_string())?
-    }
-
-    Ok(platforms)
 }
 
 async fn download_file(
