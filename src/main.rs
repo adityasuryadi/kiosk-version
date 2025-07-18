@@ -7,6 +7,7 @@ use axum::{
     routing::{get, post},
     serve, Json, Router,
 };
+use dotenv::dotenv;
 use sea_orm::{
     sqlx::types::chrono::{self, Utc},
     ActiveModelTrait, Database, DatabaseConnection, EntityTrait,
@@ -23,13 +24,12 @@ use tokio::{
 use tracing::Level;
 use tracing_subscriber::fmt::Subscriber;
 
-mod entity;
 mod error;
 
 #[tokio::main]
 async fn main() {
     dotenv::dotenv().ok();
-    let app_url = "localhost:3000";
+    let app_url = dotenv::var("APP_URL").unwrap();
     let subscriber = Subscriber::builder()
         .with_writer(io::stderr)
         .with_max_level(

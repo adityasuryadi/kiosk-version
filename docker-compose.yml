@@ -1,0 +1,12 @@
+version: "3.9"
+
+services:
+  rust-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      platforms:
+        - linux/x86_64
+    container_name: rust-x86_64-app
+    ports:
+      - "3000:3000"
