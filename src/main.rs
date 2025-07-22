@@ -20,6 +20,7 @@ use std::{
 use tokio::{
     fs::{self},
     net::TcpListener,
+    signal,
 };
 use tracing::Level;
 use tracing_subscriber::fmt::Subscriber;
@@ -46,6 +47,10 @@ async fn main() {
         .route("/health", get(health_check_handler))
         .route("/kiosk-version", post(create_kiosk_version))
         .route("/latest-version", get(get_latest_version))
+        .route(
+            "/latest-version/{platform}",
+            get(get_latest_version_by_platform),
+        )
         .route(
             "/download/{version}/{platform}/{filename}",
             get(download_file),
@@ -332,6 +337,124 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
                 notes: "ini notes".to_string(),
                 pub_date: pub_date.to_string(),
                 platforms: platforms,
+            }));
+        }
+    }
+
+    Err(APIError::FileOrPathNotExist)
+}
+
+#[derive(Serialize, Deserialize)]
+
+pub struct PlatformVersionResponse {
+    pub version: String,
+    pub notes: String,
+    pub pub_date: String,
+    pub url: String,
+    pub signature: String,
+}
+
+async fn get_latest_version_by_platform(
+    Path((platform)): Path<(String)>,
+) -> Result<Json<PlatformVersionResponse>, APIError> {
+    let kiosk_directory = dotenv::var("KIOSK_DIRECTORY").unwrap();
+    let mut modified_date: SystemTime = SystemTime::UNIX_EPOCH;
+    let kiosk_url = dotenv::var("KIOSK_DOWNLOADABLE_URL").unwrap();
+    let platform_name = &platform;
+
+    let mut entries = fs::read_dir(kiosk_directory.clone()).await?;
+    let mut versions = Vec::new();
+
+    while let Some(entry) = entries.next_entry().await? {
+        let path = entry.path();
+        if path.is_dir() {
+            if let Some(folder_name) = path.file_name().and_then(|n| n.to_str()) {
+                if let Ok(ver) = folder_name.parse::<Version>() {
+                    versions.push((ver, folder_name.to_string()));
+                }
+            }
+        }
+    }
+
+    // Sort in descending order (latest first)
+    versions.sort_by(|a, b| b.0.cmp(&a.0));
+    let version_names: Vec<String> = versions.into_iter().map(|(_, name)| name).collect();
+
+    for version in version_names.iter() {
+        let latest_folder = format!("{}/{}", kiosk_directory.clone(), version);
+        // count platform total
+        let mut platform_amount_counter = 0;
+        let mut platform_directory =
+            match fs::read_dir(latest_folder.clone() + &String::from("/") + &platform_name)
+                .await
+                .inspect_err(|e| {
+                    tracing::error!(
+                        "failed to read directory: {}",
+                        latest_folder.clone() + &String::from("/") + &platform_name
+                    );
+                }) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    // Handle the error here
+                    tracing::error!("failed to read directory: {}", e);
+                    return Err(APIError::FileOrPathNotExist);
+                }
+            };
+
+        // checking file inside platform directory
+        let mut is_platform_folder_not_empty = false;
+        let mut is_signature_exist = false;
+        let mut is_downladble_file_exist = false;
+        let mut signature = "".to_string();
+        let mut url = "".to_string();
+        while let Some(entry) = platform_directory.next_entry().await? {
+            let metadata = entry.metadata().await?;
+            modified_date = metadata.created().or_else(|_| metadata.modified())?;
+            let path = entry.path();
+            // checking signature file
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("sig") {
+                // Read the content as string
+                let content = fs::read_to_string(path.display().to_string())
+                    .await
+                    .map_err(|_| {
+                        tracing::error!(
+                            "failed to read file: {}",
+                            latest_folder.clone() + &String::from("/") + &platform_name
+                        );
+                        return APIError::FileOrPathNotExist;
+                    })?;
+                signature = content;
+                is_signature_exist = true;
+            }
+
+            // checking file besides sig extension
+            if path.is_file() && path.extension().and_then(|e| e.to_str()) != Some("sig") {
+                url = format!(
+                    "{}/download/{}/{}/{}",
+                    kiosk_url,
+                    version,
+                    platform_name,
+                    path.file_name()
+                        .and_then(|s| s.to_str())
+                        .map_or("".to_string(), |s| s.to_string())
+                );
+                is_downladble_file_exist = true;
+            }
+            is_platform_folder_not_empty = is_signature_exist && is_downladble_file_exist;
+        }
+        if is_platform_folder_not_empty {
+            platform_amount_counter += 1;
+        }
+
+        if platform_amount_counter == 1 {
+            let dt: chrono::DateTime<Utc> = modified_date.into();
+            let pub_date = dt.to_rfc3339();
+            return Ok(Json(PlatformVersionResponse {
+                version: version.to_string(),
+                pub_date,
+                notes: "".to_string(),
+                url: url.clone(),
+                signature: signature.clone(),
             }));
         }
     }
