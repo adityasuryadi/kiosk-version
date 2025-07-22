@@ -320,6 +320,10 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
                 platform_amount_counter += 1;
             }
         }
+        println!(
+            "platform_amount_counter: {} platform_amount: {}",
+            platform_amount_counter, platform_amount
+        );
         if platform_amount == platform_amount_counter {
             let dt: chrono::DateTime<Utc> = modified_date.into();
             let pub_date = dt.to_rfc3339();
@@ -332,13 +336,7 @@ pub async fn get_latest_version() -> Result<Json<KioskVersionResponse>, APIError
         }
     }
 
-    Ok(Json(KioskVersionResponse {
-        version: "".to_string(),
-        notes: "ini notes".to_string(),
-        // pub_date: kiosk_version.created_at.to_rfc3339(),
-        pub_date: "1970-01-01T00:00:00+00:00".to_string(),
-        platforms: platforms,
-    }))
+    Err(APIError::FileOrPathNotExist)
 }
 
 async fn download_file(
